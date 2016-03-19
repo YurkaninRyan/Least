@@ -1,9 +1,15 @@
 'use strict';
-var views = require('co-views');
-var parse = require('co-body');
-var co = require('co');
+const os = require('os');
+const path = require('path');
+const util = require('./util');
+const views = require('co-views');
+const parse = require('co-busboy');
+const fs = require('co-fs');
+const co = require('co');
+const less = require('less');
+const saveTo = require('save-to');
 
-var render = views(__dirname + '/../views', {
+const render = views(__dirname + '/../views', {
   map: {
     html: 'swig'
   }
@@ -16,10 +22,39 @@ module.exports.home = function* home(next) {
 };
 
 module.exports.process = function* process(next) {
-    console.log(this.request);
     if('POST' != this.method) return yield next;
-    var body = yield parse(this, { limit: '250mb' });
-    if (!body.name) this.throw(400, 'Name field is required.');
-    this.body = { name: body.name.toUpperCase() };
-    this.response.status = 200;
+    if (!this.request.is('multipart/*')) return yield next;
+
+    let parts = parse(this, { autoFields: true });
+    let tmpdir = path.join(os.tmpdir(), util.uid())
+    
+    yield fs.mkdir(tmpdir);
+
+    let files = [];
+    let css = [];
+    let to_compile = [];
+    let less_filter = /\.less/g;   
+    let file, part;
+
+    while(part = yield parts) {
+      if(part.fieldname === 'process') { 
+        files.push(file = path.join(tmpdir, part.filename));
+        to_compile.push(part.filename); 
+      }
+
+      else { files.push(file = path.join(tmpdir, part.filename)); }
+
+      saveTo(part, file, (err, destination) => {
+        if(err) throw err;
+      });
+    }
+
+    to_compile.forEach( file => {
+      util.read(tmpdir, file, err => {
+        if(err) throw err;
+      })
+    });
+    
+    this.body = files;
+    yield next;
 }
